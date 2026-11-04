@@ -1,0 +1,57 @@
+{
+  "id": "chatcmpl-9Abc123xyz",
+  "object": "chat.completion",
+  "created": 1730736000,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Claude 3.5 Sonnet is priced at $3 per million input tokens and $15 per million output tokens."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 15,
+    "completion_tokens": 24,
+    "total_tokens": 39
+  },
+  "extra_fields": {
+    "cache_debug": {
+      "cache_hit": false
+    },
+    "freshguard": {
+      "status": "verified",
+      "is_fresh": true,
+      "reverification_required": false,
+      "verification_id": "ver-89a1b2c3-d4e5-6789-abcd-ef0123456789",
+      "checked_at": "2026-11-04T16:30:00Z",
+      "expires_at": "2026-11-05T16:30:00Z",
+      "policy_ttl": "24h0m0s",
+      "claims": [
+        {
+          "claim_id": "claim-c01",
+          "category": "pricing",
+          "entity": "Anthropic Claude 3.5 Sonnet",
+          "attribute": "api_pricing",
+          "original_text": "Claude 3.5 Sonnet is priced at $3 per million input tokens and $15 per million output tokens.",
+          "verdict": "supported",
+          "confidence": 0.99,
+          "checked_at": "2026-11-04T16:30:00Z",
+          "evidence": [
+            {
+              "evidence_id": "ev-e01",
+              "source_url": "https://www.anthropic.com/pricing",
+              "source_title": "Anthropic API Pricing",
+              "snippet": "Claude 3.5 Sonnet: $3 / MTok input, $15 / MTok output.",
+              "retrieved_at": "2026-11-04T16:30:00Z",
+              "source_type": "official_docs"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
