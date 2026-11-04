@@ -1,0 +1,54 @@
+# FreshGuard + Bifrost Example Configuration
+# Demonstrates proper plugin registration order to ensure FreshGuard intercepts
+# both fresh provider responses and semantic cache hits.
+
+bifrost:
+  server:
+    port: 8080
+
+  plugins:
+    # 1. FreshGuard MUST be registered BEFORE semanticCache.
+    # Because Bifrost runs PreLLMHook forward and PostLLMHook in reverse order (LIFO),
+    # registering FreshGuard first guarantees that FreshGuard's PostLLMHook will execute
+    # even when semanticCache short-circuits on a cache hit.
+    - name: "freshguard"
+      enabled: true
+      path: "/etc/bifrost/plugins/freshguard.so" # When running as dynamic plugin
+      placement: "pre_llm"
+      order: 10
+      config:
+        verification_service_url: "http://freshguard-verification:8000"
+        timeout: "3s"
+        max_retries: 2
+        fail_open: true
+        bifrost_url: "http://localhost:8080"
+        enable_cache_eviction: true
+        reverify_on_cache_hit: true
+        categories:
+          - "pricing"
+          - "software_version"
+          - "leadership"
+
+    # 2. Bifrost Native Semantic Cache Plugin
+    - name: "semanticCache"
+      enabled: true
+      placement: "pre_llm"
+      order: 20
+      config:
+        provider: "openai"
+        embedding_model: "text-embedding-3-small"
+        dimension: 1536
+        ttl: "24h"
+        threshold: 0.85
+        cache_by_model: true
+
+  providers:
+    openai:
+      keys:
+        - name: "default"
+          value: "env://OPENAI_API_KEY"
+          weight: 1
+          models:
+            - "gpt-4o"
+            - "gpt-4o-mini"
+            - "text-embedding-3-small"
