@@ -1,7 +1,14 @@
 # Shared Contracts
 
-This directory is the source of truth for cross-component API and event contracts.
+This directory contains cross-component API and event contracts shared between Kamal's Go Bifrost gateway adapter, Ayush's Python verification service, and Krrish's frontend.
 
-Keep request/response field names, enums, nullability, error formats, and versioning rules consistent across the frontend, Go adapter, and Python service.
+## Machine-Readable Schemas
+- `shared/schemas/verification_api.json`: JSON Schema definition for `POST /v1/verifications`, `GET /v1/verifications/{id}`, `Claim`, `Evidence`, and `APIError`.
 
-The initial verification API proposal is documented in `docs/api/VERIFICATION_API.md`. Promote it to machine-readable schemas only after team agreement.
+## Key Enums & Policies
+- **Verdicts**: `supported`, `contradicted`, `unclear`.
+- **Claim Categories**: `pricing`, `software_version`, `leadership`.
+- **TTLs**:
+  - Pricing: 24 hours
+  - Software Versions: 24 hours
+  - Leadership: 7 days
