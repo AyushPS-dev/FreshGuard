@@ -1,6 +1,6 @@
 from functools import lru_cache
 from typing import List, Union
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,11 +47,11 @@ class Settings(BaseSettings):
     LLM_MAX_RETRIES: int = 2
 
     # Tavily API Settings
-    TAVILY_API_KEY: str = ""
-    TAVILY_TIMEOUT_SECONDS: float = 10.0
+    TAVILY_API_KEY: str = Field(default="", validation_alias="TAVILY_API_KEY")
+    TAVILY_TIMEOUT_SECONDS: float = Field(default=10.0, validation_alias="TAVILY_TIMEOUT")
     TAVILY_MAX_RETRIES: int = 2
-    TAVILY_SEARCH_DEPTH: str = "advanced"
-    TAVILY_MAX_RESULTS: int = 5
+    TAVILY_SEARCH_DEPTH: str = Field(default="advanced", validation_alias="TAVILY_SEARCH_DEPTH")
+    TAVILY_MAX_RESULTS: int = Field(default=5, validation_alias="TAVILY_MAX_RESULTS")
 
     # Freshness Policy Default TTLs (in seconds, matching shared/contracts/README.md)
     TTL_SOFTWARE_VERSION: int = 86400   # 24 hours
