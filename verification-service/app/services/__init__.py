@@ -9,6 +9,7 @@ from app.services.prefilter import PrefilterEngine, PrefilterResult
 from app.services.search_query import SearchQueryGenerator
 from app.services.tavily_service import TavilyService
 from app.services.verdict_engine import LLMVerdictAssessment, VerdictEngine
+from app.services.version_validator import VersionValidator
 
 __all__ = [
     "PrefilterEngine",
@@ -22,4 +23,5 @@ __all__ = [
     "TavilyService",
     "VerdictEngine",
     "LLMVerdictAssessment",
+    "VersionValidator",
 ]
