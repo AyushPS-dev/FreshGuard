@@ -53,12 +53,16 @@ class Settings(BaseSettings):
     TAVILY_SEARCH_DEPTH: str = Field(default="advanced", validation_alias="TAVILY_SEARCH_DEPTH")
     TAVILY_MAX_RESULTS: int = Field(default=5, validation_alias="TAVILY_MAX_RESULTS")
 
-    # Freshness Policy Default TTLs (in seconds, matching shared/contracts/README.md)
-    TTL_SOFTWARE_VERSION: int = 86400   # 24 hours
-    TTL_PRICING: int = 86400            # 24 hours
-    TTL_LEADERSHIP: int = 604800        # 7 days
-    TTL_BREAKING_NEWS: int = 300        # 5 minutes
-    TTL_GENERAL: int = 43200            # 12 hours
+    # Freshness Policy Default TTLs (in seconds)
+    TTL_SOFTWARE_VERSION: int = Field(default=86400, description="Software version TTL (24 hours)")
+    TTL_PRICING: int = Field(default=21600, description="Pricing TTL (6 hours)")
+    TTL_LEADERSHIP: int = Field(default=86400, description="Leadership TTL (24 hours)")
+    TTL_PRODUCT_AVAILABILITY: int = Field(default=3600, description="Product availability TTL (1 hour)")
+    TTL_RECENT_EVENTS: int = Field(default=21600, description="Recent events TTL (6 hours)")
+    TTL_STATISTICS: int = Field(default=86400, description="Statistics TTL (24 hours)")
+    TTL_GENERAL_KNOWLEDGE: int = Field(default=2592000, description="General knowledge TTL (30 days)")
+    TTL_GENERAL: int = Field(default=43200, description="Fallback general TTL (12 hours)")
+
 
 
 @lru_cache
