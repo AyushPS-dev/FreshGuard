@@ -129,7 +129,53 @@ class MockLLMProvider(BaseLLMProvider):
                 "time_sensitive": True,
             })
 
+        # Check if response_model is for verdict assessment
+        if "verdict" in response_model.model_fields:
+            lower_user = user_text.lower()
+            evidence_part = lower_user
+            if "retrieved web evidence" in lower_user:
+                evidence_part = lower_user.split("retrieved web evidence", 1)[1]
+
+            if "contradicts" in evidence_part or "superseded" in evidence_part or "python 3.13" in evidence_part:
+                return response_model.model_validate({
+                    "verdict": "CONTRADICTED",
+                    "confidence": 0.95,
+                    "reason": "Evidence indicates a newer version or contradictory fact.",
+                    "supporting_evidence_ids": [],
+                    "contradicting_evidence_ids": ["ev_01", "ev_c1", "ev_02"],
+                    "corrected_value": "Python 3.13",
+                })
+            elif "conflicting" in evidence_part or "conflict" in evidence_part:
+                return response_model.model_validate({
+                    "verdict": "UNCLEAR",
+                    "confidence": 0.40,
+                    "reason": "Evidence contains conflicting statements from multiple sources.",
+                    "supporting_evidence_ids": [],
+                    "contradicting_evidence_ids": [],
+                    "corrected_value": None,
+                })
+            elif "confirms" in evidence_part or "latest stable" in evidence_part or "2.9%" in evidence_part:
+                return response_model.model_validate({
+                    "verdict": "SUPPORTED",
+                    "confidence": 0.92,
+                    "reason": "Evidence directly confirms the claim.",
+                    "supporting_evidence_ids": ["ev_01", "ev_c1", "ev_c2"],
+                    "contradicting_evidence_ids": [],
+                    "corrected_value": None,
+                })
+            else:
+                return response_model.model_validate({
+                    "verdict": "UNCLEAR",
+                    "confidence": 0.50,
+                    "reason": "Available evidence is insufficient or inconclusive.",
+                    "supporting_evidence_ids": [],
+                    "contradicting_evidence_ids": [],
+                    "corrected_value": None,
+                })
+
+
         return response_model.model_validate({"claims": mock_claims})
+
 
 
 class OpenAILLMProvider(BaseLLMProvider):

@@ -8,6 +8,7 @@ from app.services.llm_provider import (
 from app.services.prefilter import PrefilterEngine, PrefilterResult
 from app.services.search_query import SearchQueryGenerator
 from app.services.tavily_service import TavilyService
+from app.services.verdict_engine import LLMVerdictAssessment, VerdictEngine
 
 __all__ = [
     "PrefilterEngine",
@@ -19,4 +20,6 @@ __all__ = [
     "get_llm_provider",
     "SearchQueryGenerator",
     "TavilyService",
+    "VerdictEngine",
+    "LLMVerdictAssessment",
 ]
