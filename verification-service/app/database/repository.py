@@ -155,6 +155,24 @@ class VerificationRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_verification_by_request_id(
+        session: AsyncSession,
+        request_id: str,
+    ) -> Optional[VerificationRecord]:
+        """Retrieves the latest verification record matching request_id for idempotency."""
+        stmt = (
+            select(VerificationRecord)
+            .where(VerificationRecord.request_id == request_id)
+            .options(
+                selectinload(VerificationRecord.claims).selectinload(ClaimRecord.evidence)
+            )
+            .order_by(desc(VerificationRecord.created_at))
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def find_fresh_cached_claim(
         session: AsyncSession,
         entity: str,

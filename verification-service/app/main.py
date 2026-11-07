@@ -5,8 +5,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import health
+from app.api.routes import health, verifications
 from app.config import get_settings
+from app.database.database import get_engine, init_db
 from app.utils.exceptions import FreshGuardException
 from app.utils.logging import logger, setup_logging
 
@@ -22,7 +23,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         settings.VERSION,
         settings.ENVIRONMENT,
     )
+    # Initialize database tables on application startup
+    try:
+        await init_db()
+    except Exception as db_init_err:
+        logger.warning("Database auto-init on startup encountered: %s", db_init_err)
+
     yield
+
+    # Clean up database connection pool on shutdown
+    try:
+        engine = get_engine()
+        await engine.dispose()
+    except Exception as db_disp_err:
+        logger.warning("Database disposal on shutdown encountered: %s", db_disp_err)
+
     logger.info("Shutting down %s", settings.SERVICE_NAME)
 
 
@@ -48,7 +63,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Centralized Exception Handlers
+    # Centralized Exception Handlers complying with APIError and shared schemas
     @app.exception_handler(FreshGuardException)
     async def freshguard_exception_handler(request: Request, exc: FreshGuardException) -> JSONResponse:
         logger.warning(
@@ -58,24 +73,32 @@ def create_app() -> FastAPI:
             request.url.path,
             exc.details,
         )
+        req_id = request.headers.get("X-Request-ID") or "unknown"
         return JSONResponse(
             status_code=exc.status_code,
             content={
-                "error": exc.message,
                 "code": exc.code,
-                "details": exc.details,
+                "message": exc.message,
+                "error": exc.message,
+                "request_id": req_id,
+                "retryable": exc.status_code in (429, 502, 503, 504),
+                "details": exc.details or {},
             },
         )
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
         logger.warning("Validation error on path %s: %s", request.url.path, exc.errors())
+        req_id = request.headers.get("X-Request-ID") or "unknown"
         return JSONResponse(
             status_code=422,
             content={
-                "error": "Request validation failed.",
                 "code": "VALIDATION_ERROR",
-                "details": exc.errors(),
+                "message": "Request validation failed.",
+                "error": "Request validation failed.",
+                "request_id": req_id,
+                "retryable": False,
+                "details": {"validation_errors": exc.errors()},
             },
         )
 
@@ -87,17 +110,22 @@ def create_app() -> FastAPI:
             str(exc),
             exc_info=True,
         )
+        req_id = request.headers.get("X-Request-ID") or "unknown"
         return JSONResponse(
             status_code=500,
             content={
-                "error": "An internal server error occurred.",
                 "code": "INTERNAL_SERVER_ERROR",
+                "message": "An internal server error occurred.",
+                "error": "An internal server error occurred.",
+                "request_id": req_id,
+                "retryable": False,
                 "details": {},
             },
         )
 
     # Register Routers
     app.include_router(health.router)
+    app.include_router(verifications.router)
 
     return app
 

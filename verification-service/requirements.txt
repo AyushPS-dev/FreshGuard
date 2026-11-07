@@ -11,3 +11,4 @@ packaging>=24.0
 tavily-python>=0.5.0
 pytest>=8.1.0
 pytest-asyncio>=0.23.5
+jsonschema>=4.21.0

@@ -112,3 +112,15 @@ class DatabaseError(FreshGuardException):
             code="DATABASE_ERROR",
             details=details,
         )
+
+
+class NotFoundError(FreshGuardException):
+    """Raised when a requested resource is not found."""
+
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            message=message,
+            status_code=404,
+            code="NOT_FOUND",
+            details=details,
+        )
