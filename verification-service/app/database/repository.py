@@ -1,7 +1,8 @@
+from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -15,8 +16,10 @@ from app.database.models import (
 from app.schemas.claims import ClaimCategory, ClaimVerdict, ClaimVerdictResult, ExtractedClaim
 from app.schemas.evidence import EvidenceItem, ensure_utc_datetime
 from app.schemas.response import VerificationResponse, VerificationStatus
-from app.services.freshness_policy import FreshnessPolicyEngine
 from app.utils.exceptions import DatabaseError
+
+if TYPE_CHECKING:
+    from app.services.freshness_policy import FreshnessPolicyEngine
 
 logger = logging.getLogger("freshguard.repository")
 
@@ -52,7 +55,11 @@ class VerificationRepository:
         Persists a completed verification session, associated claims, and grounded evidence.
         """
         now = datetime.now(timezone.utc)
-        engine = policy_engine or FreshnessPolicyEngine()
+        if policy_engine is not None:
+            engine = policy_engine
+        else:
+            from app.services.freshness_policy import FreshnessPolicyEngine
+            engine = FreshnessPolicyEngine()
         verif_id = resp.verification_id or f"verif_{resp.request_id}_{int(now.timestamp())}"
 
         # 1. Create top-level verification record

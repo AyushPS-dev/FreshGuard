@@ -10,6 +10,7 @@ from app.services.freshness_policy import FreshnessEvaluation, FreshnessPolicyEn
 from app.services.search_query import SearchQueryGenerator
 from app.services.tavily_service import TavilyService
 from app.services.verdict_engine import LLMVerdictAssessment, VerdictEngine
+from app.services.verification_pipeline import VerificationPipeline
 from app.services.version_validator import VersionValidator
 
 __all__ = [
@@ -27,5 +28,6 @@ __all__ = [
     "VersionValidator",
     "FreshnessPolicyEngine",
     "FreshnessEvaluation",
+    "VerificationPipeline",
 ]
 
