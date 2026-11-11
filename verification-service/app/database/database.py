@@ -52,6 +52,12 @@ def get_engine(database_url: Optional[str] = None) -> AsyncEngine:
         url = database_url or get_settings().DATABASE_URL
         # SQLite async connection setup
         connect_args = {"check_same_thread": False} if "sqlite" in url else {}
+        if "sqlite" in url and "///" in url and ":memory:" not in url:
+            from pathlib import Path
+            db_path_str = url.split("///", 1)[1]
+            if db_path_str:
+                db_path = Path(db_path_str).resolve()
+                db_path.parent.mkdir(parents=True, exist_ok=True)
         _engine = create_async_engine(
             url,
             echo=False,
