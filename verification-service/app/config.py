@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_SECONDS: float = 15.0
     LLM_MAX_RETRIES: int = 2
 
+    # Gemini Developer API Settings
+    GEMINI_API_KEY: str = Field(default="", validation_alias="GEMINI_API_KEY")
+    GEMINI_MODEL: str = Field(default="gemini-2.5-flash", validation_alias="GEMINI_MODEL")
+
     # Tavily API Settings
     TAVILY_API_KEY: str = Field(default="", validation_alias="TAVILY_API_KEY")
     TAVILY_TIMEOUT_SECONDS: float = Field(default=10.0, validation_alias="TAVILY_TIMEOUT")

@@ -275,6 +275,133 @@ class OpenAILLMProvider(BaseLLMProvider):
             )
 
 
+class GeminiLLMProvider(BaseLLMProvider):
+    """
+    Google Gemini Developer API provider using the official google-genai Python SDK.
+    Supports asynchronous structured outputs validated against Pydantic models.
+    """
+
+    def __init__(self, settings: Optional[Settings] = None, client: Optional[Any] = None):
+        self.settings = settings or get_settings()
+        api_key = self.settings.GEMINI_API_KEY or self.settings.LLM_API_KEY
+        if not api_key:
+            raise ConfigurationError(
+                "GEMINI_API_KEY (or LLM_API_KEY) is required when using GeminiLLMProvider.",
+                details={"provider": self.settings.LLM_PROVIDER},
+            )
+
+        self.api_key = api_key
+        self.model = self.settings.GEMINI_MODEL or self.settings.LLM_MODEL or "gemini-2.5-flash"
+        self.timeout = self.settings.LLM_TIMEOUT_SECONDS
+        self.max_retries = self.settings.LLM_MAX_RETRIES
+
+        if client is not None:
+            self.client = client
+        else:
+            from google import genai
+            self.client = genai.Client(api_key=self.api_key)
+
+    async def generate_structured(
+        self,
+        system_prompt: str,
+        user_text: str,
+        response_model: Type[T],
+    ) -> T:
+        from google.genai import errors, types
+
+        schema = response_model.model_json_schema()
+        config = types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            response_mime_type="application/json",
+            response_schema=schema,
+            temperature=0.0,
+        )
+
+        attempt = 0
+        raw_content = ""
+        while True:
+            try:
+                response = await asyncio.wait_for(
+                    self.client.aio.models.generate_content(
+                        model=self.model,
+                        contents=f"Text to analyze:\n\n{user_text}",
+                        config=config,
+                    ),
+                    timeout=self.timeout,
+                )
+                raw_content = getattr(response, "text", "") or ""
+                break
+            except errors.APIError as exc:
+                status_code = getattr(exc, "code", None)
+                if status_code in (429, 500, 502, 503, 504) and attempt < self.max_retries:
+                    attempt += 1
+                    delay = 0.5 * (2 ** (attempt - 1))
+                    logger.warning(
+                        "Transient Gemini API error (HTTP %s) on attempt %d/%d. Retrying in %.2fs: %s",
+                        status_code,
+                        attempt,
+                        self.max_retries,
+                        delay,
+                        exc,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+                if status_code == 429:
+                    raise ExtractionError(
+                        message=f"Gemini API rate limit exceeded (HTTP 429): {str(exc)}",
+                        details={"status_code": 429, "retryable": True, "model": self.model},
+                    ) from exc
+                elif status_code == 503:
+                    raise ExtractionError(
+                        message=f"Gemini API service temporarily unavailable (HTTP 503): {str(exc)}",
+                        details={"status_code": 503, "retryable": True, "model": self.model},
+                    ) from exc
+                else:
+                    raise ExtractionError(
+                        message=f"Gemini API returned error (HTTP {status_code}): {str(exc)}",
+                        details={"status_code": status_code, "model": self.model},
+                    ) from exc
+            except asyncio.TimeoutError as exc:
+                raise ExtractionError(
+                    message=f"Gemini request timed out after {self.timeout}s: {str(exc)}",
+                    details={"model": self.model, "timeout": self.timeout},
+                ) from exc
+            except Exception as exc:
+                if isinstance(exc, ExtractionError):
+                    raise
+                raise ExtractionError(
+                    message=f"Gemini LLM call failed: {str(exc)}",
+                    details={"error_type": type(exc).__name__, "model": self.model},
+                ) from exc
+
+        # Strip markdown code fences if model wrapped the JSON
+        text_to_parse = raw_content.strip()
+        if text_to_parse.startswith("```"):
+            lines = text_to_parse.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            text_to_parse = "\n".join(lines).strip()
+
+        try:
+            parsed_json = json.loads(text_to_parse)
+        except json.JSONDecodeError as exc:
+            raise ExtractionError(
+                message=f"Gemini produced non-JSON content: {str(exc)}",
+                details={"raw_content": raw_content},
+            ) from exc
+
+        try:
+            return response_model.model_validate(parsed_json)
+        except ValidationError as exc:
+            raise ExtractionError(
+                message="Gemini output failed Pydantic schema validation.",
+                details={"validation_errors": exc.errors(), "parsed_json": parsed_json},
+            ) from exc
+
+
 def get_llm_provider(settings: Optional[Settings] = None) -> BaseLLMProvider:
     """Factory creating the configured LLM provider adapter."""
     s = settings or get_settings()
@@ -282,6 +409,8 @@ def get_llm_provider(settings: Optional[Settings] = None) -> BaseLLMProvider:
 
     if provider_name == "openai":
         return OpenAILLMProvider(settings=s)
+    elif provider_name == "gemini":
+        return GeminiLLMProvider(settings=s)
     elif provider_name == "mock":
         return MockLLMProvider()
     else:
