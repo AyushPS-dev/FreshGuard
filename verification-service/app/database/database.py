@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 import logging
 from typing import Optional
+from urllib.parse import urlparse, urlunparse
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -12,6 +13,33 @@ from app.config import get_settings
 from app.database.models import Base
 
 logger = logging.getLogger("freshguard.database")
+
+
+def _mask_db_url(url: str) -> str:
+    """Returns the database URL with any password replaced by '***'.
+
+    Safe to pass to logging calls. Preserves scheme, host, port, and database
+    name so the log entry still identifies the target without exposing credentials.
+
+    Examples:
+        postgresql+asyncpg://user:secret@host/db  ->  postgresql+asyncpg://user:***@host/db
+        sqlite+aiosqlite:///./freshguard.db       ->  sqlite+aiosqlite:///./freshguard.db
+    """
+    try:
+        parsed = urlparse(url)
+        if parsed.password:
+            # Replace netloc credentials while keeping the rest intact
+            masked_netloc = parsed.hostname or ""
+            if parsed.port:
+                masked_netloc = f"{masked_netloc}:{parsed.port}"
+            if parsed.username:
+                masked_netloc = f"{parsed.username}:***@{masked_netloc}"
+            masked = parsed._replace(netloc=masked_netloc)
+            return urlunparse(masked)
+    except Exception:
+        # If URL parsing fails, return a safe placeholder rather than risking exposure
+        return "<db-url-parse-error>"
+    return url
 
 _engine: Optional[AsyncEngine] = None
 _sessionmaker: Optional[async_sessionmaker[AsyncSession]] = None
@@ -30,7 +58,7 @@ def get_engine(database_url: Optional[str] = None) -> AsyncEngine:
             future=True,
             connect_args=connect_args,
         )
-        logger.info("Initialized async database engine with URL: %s", url)
+        logger.info("Initialized async database engine with URL: %s", _mask_db_url(url))
     return _engine
 
 

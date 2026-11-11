@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from app.api.routes import health, verifications
 from app.config import get_settings
 from app.database.database import get_engine, init_db
+from app.middleware.body_limit import RequestBodySizeLimitMiddleware
 from app.utils.exceptions import FreshGuardException
 from app.utils.logging import logger, setup_logging
 
@@ -61,6 +62,14 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+    )
+
+    # Reject HTTP requests whose body exceeds the configured maximum size.
+    # This middleware runs before any FastAPI routing or Pydantic parsing,
+    # protecting against memory-exhaustion via oversized payloads.
+    app.add_middleware(
+        RequestBodySizeLimitMiddleware,
+        max_bytes=settings.MAX_REQUEST_BODY_SIZE,
     )
 
     # Centralized Exception Handlers complying with APIError and shared schemas

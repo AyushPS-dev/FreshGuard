@@ -1,4 +1,5 @@
 from functools import lru_cache
+import json
 from typing import List, Union
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,11 +30,54 @@ class Settings(BaseSettings):
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
-        if isinstance(v, str) and not v.startswith("["):
-            return [origin.strip() for origin in v.split(",") if origin.strip()]
-        elif isinstance(v, list):
+        """Parse CORS origins from comma-separated strings or JSON arrays.
+
+        Accepted formats (via environment variable):
+            CORS_ORIGINS=https://example.com,http://localhost:3000
+            CORS_ORIGINS=["https://example.com","http://localhost:3000"]
+
+        Rules:
+        - An already-constructed list passes through unchanged.
+        - A string beginning with '[' is parsed as JSON. If parsing fails, a
+          ValueError is raised — misconfiguration is never silently swallowed.
+        - A plain comma-separated string is split and stripped.
+        - An empty string results in a ValueError (not a silent wildcard fallback).
+
+        The only way to allow all origins is to supply the literal value ['*']
+        or the string '*' explicitly.
+        """
+        if isinstance(v, list):
             return v
-        return ["*"]
+        if isinstance(v, str):
+            stripped = v.strip()
+            if stripped.startswith("["):
+                # JSON-array format
+                try:
+                    parsed = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"CORS_ORIGINS looks like a JSON array but could not be parsed: {exc}"
+                    ) from exc
+                if not isinstance(parsed, list):
+                    raise ValueError(
+                        "CORS_ORIGINS JSON must be an array of strings, got: "
+                        f"{type(parsed).__name__}"
+                    )
+                return [str(origin).strip() for origin in parsed if str(origin).strip()]
+            if not stripped:
+                raise ValueError(
+                    "CORS_ORIGINS is set to an empty string. "
+                    "Supply explicit origins or '*' to allow all."
+                )
+            # Comma-separated format
+            return [origin.strip() for origin in stripped.split(",") if origin.strip()]
+        raise ValueError(f"CORS_ORIGINS must be a string or list, got: {type(v).__name__}")
+
+    # Request body protection
+    MAX_REQUEST_BODY_SIZE: int = Field(
+        default=1_048_576,  # 1 MiB
+        description="Maximum HTTP request body size in bytes. Requests exceeding this are rejected with 413.",
+    )
 
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./freshguard.db"
