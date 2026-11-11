@@ -53,7 +53,94 @@ TAVILY_API_KEY=tvly-...
 ENVIRONMENT=development
 PORT=8000
 DATABASE_URL=sqlite+aiosqlite:///./freshguard.db
+
+# Authentication (see section below)
+API_AUTH_MODE=disabled
+VERIFICATION_SERVICE_API_KEY=
 ```
+
+---
+
+## Authentication
+
+Verification endpoints (`POST /v1/verifications`, `GET /v1/verifications/{id}`) are
+protected by an `X-API-Key` header. Health endpoints (`/health`, `/health/ready`)
+are always public.
+
+### Modes
+
+Configured via `API_AUTH_MODE`:
+
+| Mode | Behaviour | Permitted Environments |
+|---|---|---|
+| `disabled` | No authentication required. | `development`, `test` |
+| `warn` | Missing/invalid key is logged, request allowed. | `staging`, `development`, `test` |
+| `enforce` | Valid `X-API-Key` required; invalid requests → HTTP 401. | `production`, `staging`, `development`, `test` |
+
+### Environment Enforcement Matrix
+
+Authentication requirements are strictly enforced at service startup based on `ENVIRONMENT`:
+
+- **Production (`ENVIRONMENT=production` / `prod`)**:
+  - `API_AUTH_MODE` **MUST** be set to `enforce`.
+  - `VERIFICATION_SERVICE_API_KEY` **MUST** be non-empty.
+  - Startup fails immediately with `ConfigurationError` if `API_AUTH_MODE` is `disabled` or `warn`, or if the key is missing/empty. Never silently downgrades.
+- **Staging (`ENVIRONMENT=staging`)**:
+  - `API_AUTH_MODE` must be `warn` or `enforce`.
+  - Startup fails if set to `disabled`.
+  - If `enforce` is selected, `VERIFICATION_SERVICE_API_KEY` must be non-empty.
+- **Development & Testing (`ENVIRONMENT=development` / `test`)**:
+  - All modes permitted (`disabled`, `warn`, `enforce`).
+  - If `enforce` is selected, `VERIFICATION_SERVICE_API_KEY` must be non-empty.
+
+### Required Request Header
+
+```
+X-API-Key: <your-secret-key>
+```
+
+### Local Development Setup
+
+```bash
+# No authentication required:
+ENVIRONMENT=development
+API_AUTH_MODE=disabled
+VERIFICATION_SERVICE_API_KEY=
+```
+
+### Staging Setup (Rollout)
+
+```bash
+# Warn mode allows unauthenticated/migrating callers during rollout:
+ENVIRONMENT=staging
+API_AUTH_MODE=warn
+VERIFICATION_SERVICE_API_KEY=
+```
+
+### Production Configuration
+
+```bash
+# Generate a strong key (do not commit to source control):
+# openssl rand -hex 32
+
+ENVIRONMENT=production
+API_AUTH_MODE=enforce
+VERIFICATION_SERVICE_API_KEY=<your-generated-secret-here>
+```
+
+Set `VERIFICATION_SERVICE_API_KEY` as a **Render Secret Environment Variable**,
+never as a plain-text value in `render.yaml`.
+
+The service will refuse to start if `ENVIRONMENT=production` and `API_AUTH_MODE` is not `enforce`
+or `VERIFICATION_SERVICE_API_KEY` is missing.
+
+### Integration (Go Client)
+
+The Go Bifrost plugin client must be updated by Kamal to send:
+```
+X-API-Key: <same-secret>
+```
+Both sides must share the same key value. Coordinate key rotation out-of-band.
 
 ---
 

@@ -90,6 +90,32 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_SECONDS: float = 15.0
     LLM_MAX_RETRIES: int = 2
 
+    # Authentication Settings
+    # API_AUTH_MODE controls how the X-API-Key header is enforced:
+    #   "disabled" - No authentication required (local development only).
+    #   "warn"     - Missing/invalid key is logged but request is allowed.
+    #   "enforce"  - Valid X-API-Key is required; invalid requests return HTTP 401.
+    # Production deployments MUST use "enforce".
+    API_AUTH_MODE: str = Field(default="disabled", validation_alias="API_AUTH_MODE")
+    # VERIFICATION_SERVICE_API_KEY - the shared secret sent as X-API-Key by callers.
+    # Required when API_AUTH_MODE=enforce. Never hardcode or log this value.
+    VERIFICATION_SERVICE_API_KEY: str = Field(
+        default="", validation_alias="VERIFICATION_SERVICE_API_KEY"
+    )
+
+    @field_validator("API_AUTH_MODE", mode="before")
+    @classmethod
+    def validate_auth_mode(cls, v: str) -> str:
+        """Normalise and validate API_AUTH_MODE at construction time."""
+        allowed = {"disabled", "warn", "enforce"}
+        normalised = str(v).lower().strip()
+        if normalised not in allowed:
+            raise ValueError(
+                f"API_AUTH_MODE must be one of: {', '.join(sorted(allowed))}. "
+                f"Got: '{v}'"
+            )
+        return normalised
+
     # Gemini Developer API Settings
     GEMINI_API_KEY: str = Field(default="", validation_alias="GEMINI_API_KEY")
     GEMINI_MODEL: str = Field(default="gemini-2.5-flash", validation_alias="GEMINI_MODEL")

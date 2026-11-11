@@ -4,7 +4,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Header, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_pipeline
+from app.api.dependencies import get_pipeline, require_api_key
 from app.database.database import get_db_session
 from app.database.models import VerificationRecord
 from app.database.repository import VerificationRepository
@@ -22,7 +22,15 @@ from app.utils.exceptions import FreshGuardException, NotFoundError
 
 logger = logging.getLogger("freshguard.api.verifications")
 
-router = APIRouter(prefix="/v1/verifications", tags=["verifications"])
+# require_api_key is applied at the router level so that every current and
+# future endpoint in this router is automatically protected.
+# Health routes (/health, /health/ready) live in a separate router and are
+# intentionally excluded from this dependency.
+router = APIRouter(
+    prefix="/v1/verifications",
+    tags=["verifications"],
+    dependencies=[Depends(require_api_key)],
+)
 
 
 def record_to_response(record: VerificationRecord) -> VerificationResponse:

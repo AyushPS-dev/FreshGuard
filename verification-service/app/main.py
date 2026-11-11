@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.dependencies import validate_auth_config
 from app.api.routes import health, verifications
 from app.config import get_settings
 from app.database.database import get_engine, init_db
@@ -24,6 +25,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         settings.VERSION,
         settings.ENVIRONMENT,
     )
+
+    # Validate authentication configuration before accepting traffic.
+    # Raises ConfigurationError (aborting startup) when API_AUTH_MODE=enforce
+    # but VERIFICATION_SERVICE_API_KEY is not configured.
+    try:
+        validate_auth_config(settings)
+    except Exception as auth_cfg_err:
+        logger.critical(
+            "Authentication configuration check failed: %s — startup aborted.",
+            str(auth_cfg_err),
+        )
+        raise
+
     # Initialize database tables on application startup
     try:
         await init_db()

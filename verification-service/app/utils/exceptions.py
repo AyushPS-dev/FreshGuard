@@ -30,6 +30,27 @@ class ConfigurationError(FreshGuardException):
         )
 
 
+class AuthenticationError(FreshGuardException):
+    """Raised when a request fails API-key authentication.
+
+    Returns HTTP 401 with a generic message that deliberately avoids revealing
+    whether the key was absent, incorrect, or the service is misconfigured.
+    The actual key value is never logged or included in ``details``.
+    """
+
+    def __init__(
+        self,
+        message: str = "Missing or invalid API key.",
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(
+            message=message,
+            status_code=401,
+            code="UNAUTHORIZED",
+            details=details,
+        )
+
+
 class PrefilterError(FreshGuardException):
     """Raised when rule-based prefiltering fails."""
 
