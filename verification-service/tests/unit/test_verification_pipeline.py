@@ -19,7 +19,12 @@ from app.schemas.evidence import (
     EvidenceSourceType,
 )
 from app.schemas.request import VerificationRequest
-from app.schemas.response import VerificationResponse, VerificationStatus
+from app.schemas.response import (
+    FreshnessStatus,
+    LifecycleStatus,
+    VerificationResponse,
+    VerificationStatus,
+)
 from app.services.extraction import ClaimExtractionEngine
 from app.services.freshness_policy import FreshnessPolicyEngine
 from app.services.prefilter import PrefilterEngine, PrefilterResult
@@ -98,7 +103,8 @@ async def test_complete_verification_flow(test_db_session: AsyncSession):
     resp = await pipeline.verify(req, session=test_db_session)
 
     assert resp.request_id == "req_001"
-    assert resp.status == VerificationStatus.FRESH
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.FRESH
     assert resp.requires_refresh is False
     assert resp.claims_checked == 1
     assert len(resp.results) == 1
@@ -117,7 +123,8 @@ async def test_prefilter_says_verification_unnecessary(test_db_session: AsyncSes
     req = VerificationRequest(request_id="req_002", text="Photosynthesis uses sunlight to synthesize nutrients.")
     resp = await pipeline.verify(req, session=test_db_session)
 
-    assert resp.status == VerificationStatus.NOT_REQUIRED
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.NOT_REQUIRED
     assert resp.requires_refresh is False
     assert resp.claims_checked == 0
     assert len(resp.results) == 0
@@ -152,7 +159,8 @@ async def test_single_extracted_claim(test_db_session: AsyncSession):
 
     assert resp.claims_checked == 1
     assert resp.results[0].claim_id == "c1"
-    assert resp.status == VerificationStatus.FRESH
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.FRESH
 
 
 # 4. Multiple extracted claims
@@ -178,7 +186,8 @@ async def test_multiple_extracted_claims(test_db_session: AsyncSession):
     resp = await pipeline.verify(req, session=test_db_session)
 
     assert resp.claims_checked == 2
-    assert resp.status == VerificationStatus.FRESH
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.FRESH
     assert resp.requires_refresh is False
 
 
@@ -194,7 +203,8 @@ async def test_zero_extracted_claims(test_db_session: AsyncSession):
     req = VerificationRequest(request_id="req_005", text="No claims were really here.")
     resp = await pipeline.verify(req, session=test_db_session)
 
-    assert resp.status == VerificationStatus.FRESH
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.FRESH
     assert resp.requires_refresh is False
     assert resp.claims_checked == 0
     assert len(resp.results) == 0
@@ -306,7 +316,8 @@ async def test_cache_miss_triggers_evidence_retrieval(test_db_session: AsyncSess
     resp = await pipeline.verify(req, session=test_db_session)
 
     pipeline.tavily_service.retrieve_evidence_for_claim.assert_called_once()
-    assert resp.status == VerificationStatus.FRESH
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.FRESH
 
 
 # 9. Software-version deterministic path avoids LLM verdict engine
@@ -356,7 +367,8 @@ async def test_version_validator_unclear_falls_back_appropriately(test_db_sessio
 
     pipeline.verdict_engine.evaluate_claim.assert_called_once()
     assert resp.results[0].verdict == ClaimVerdict.SUPPORTED
-    assert resp.status == VerificationStatus.FRESH
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.FRESH
 
 
 # 11. Non-version claims use verdict engine
@@ -396,7 +408,8 @@ async def test_empty_evidence_produces_unclear(test_db_session: AsyncSession):
 
     assert resp.results[0].verdict == ClaimVerdict.UNCLEAR
     assert "No supporting or refuting web evidence was retrieved." in resp.results[0].reason
-    assert resp.status == VerificationStatus.UNCERTAIN
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.UNCERTAIN
 
 
 # 13. Tavily timeout
@@ -413,7 +426,8 @@ async def test_tavily_timeout(test_db_session: AsyncSession):
 
     assert resp.results[0].verdict == ClaimVerdict.UNCLEAR
     assert "Evidence retrieval failed" in resp.results[0].reason
-    assert resp.status == VerificationStatus.UNCERTAIN
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.UNCERTAIN
 
 
 # 14. Extraction failure
@@ -426,7 +440,8 @@ async def test_extraction_failure(test_db_session: AsyncSession):
     req = VerificationRequest(request_id="req_014", text="Some raw text")
     resp = await pipeline.verify(req, session=test_db_session)
 
-    assert resp.status == VerificationStatus.UNCERTAIN
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.UNCERTAIN
     assert resp.error is not None
     assert resp.error.code == "EXTRACTION_FAILURE"
 
@@ -446,7 +461,8 @@ async def test_verdict_engine_failure(test_db_session: AsyncSession):
     resp = await pipeline.verify(req, session=test_db_session)
 
     assert resp.results[0].verdict == ClaimVerdict.UNCLEAR
-    assert resp.status == VerificationStatus.UNCERTAIN
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.UNCERTAIN
 
 
 # 16. Database persistence
@@ -522,7 +538,8 @@ async def test_independent_claim_failure(test_db_session: AsyncSession):
     assert res_map["c_fail"].verdict == ClaimVerdict.UNCLEAR
     assert res_map["c_success"].verdict == ClaimVerdict.SUPPORTED
     # One unclear claim means overall verification cannot be marked FRESH
-    assert resp.status == VerificationStatus.UNCERTAIN
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.UNCERTAIN
 
 
 # 19. Mixed cached and uncached claims
@@ -536,7 +553,8 @@ async def test_mixed_cached_and_uncached_claims(test_db_session: AsyncSession):
     prior_resp = VerificationResponse(
         request_id="prior_req",
         verification_id="prior_go",
-        status=VerificationStatus.FRESH,
+        status=LifecycleStatus.COMPLETED,
+        freshness_status=FreshnessStatus.FRESH,
         requires_refresh=False,
         claims_checked=1,
         results=[
@@ -575,7 +593,8 @@ async def test_mixed_cached_and_uncached_claims(test_db_session: AsyncSession):
     res_map = {r.claim_id: r for r in resp.results}
     assert "[CACHED FACT]" in res_map["c_cached"].reason
     assert res_map["c_uncached"].reason == "Rust 1.77 verified."
-    assert resp.status == VerificationStatus.FRESH
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.FRESH
 
 
 # 20. No incomplete result marked FRESH
@@ -599,5 +618,6 @@ async def test_no_incomplete_result_marked_fresh(test_db_session: AsyncSession):
     resp = await pipeline.verify(req, session=test_db_session)
 
     assert any(r.verdict == ClaimVerdict.UNCLEAR for r in resp.results)
-    assert resp.status != VerificationStatus.FRESH
-    assert resp.status == VerificationStatus.UNCERTAIN
+    assert resp.freshness_status != FreshnessStatus.FRESH
+    assert resp.freshness_status == FreshnessStatus.UNCERTAIN
+    assert resp.status == LifecycleStatus.COMPLETED

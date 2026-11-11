@@ -17,6 +17,8 @@ from app.schemas.request import (
 )
 from app.schemas.response import (
     APIErrorDetail,
+    FreshnessStatus,
+    LifecycleStatus,
     VerificationResponse,
     VerificationStatus,
 )
@@ -28,6 +30,8 @@ __all__ = [
     # Response
     "VerificationResponse",
     "VerificationStatus",
+    "LifecycleStatus",
+    "FreshnessStatus",
     "APIErrorDetail",
     # Claims
     "ExtractedClaim",

@@ -15,7 +15,12 @@ from app.database.repository import VerificationRepository
 from app.main import app
 from app.schemas.claims import ClaimCategory, ClaimVerdict, ClaimVerdictResult, ExtractedClaim
 from app.schemas.evidence import EvidenceItem, EvidenceMinimal, EvidenceSourceType
-from app.schemas.response import VerificationResponse, VerificationStatus
+from app.schemas.response import (
+    FreshnessStatus,
+    LifecycleStatus,
+    VerificationResponse,
+    VerificationStatus,
+)
 from app.services.prefilter import PrefilterResult
 from app.services.verification_pipeline import VerificationPipeline
 
@@ -110,11 +115,12 @@ async def test_valid_post_request(integration_app):
     data = resp.json()
     assert data["request_id"] == "req_api_001"
     assert "verification_id" in data
-    assert data["status"] == "FRESH"
+    assert data["status"] == "completed"
+    assert data["freshness_status"] == "FRESH"
     assert data["requires_refresh"] is False
     assert data["claims_checked"] == 1
     assert len(data["results"]) == 1
-    assert data["results"][0]["verdict"] == "SUPPORTED"
+    assert data["results"][0]["verdict"] == "supported"
 
 
 # 3. Invalid POST request (malformed types)
@@ -189,7 +195,8 @@ async def test_get_existing_verification(integration_app):
     data = get_resp.json()
     assert data["verification_id"] == verif_id
     assert data["request_id"] == "req_get_006"
-    assert data["status"] == "FRESH"
+    assert data["status"] == "completed"
+    assert data["freshness_status"] == "FRESH"
     assert len(data["claims"]) == 1
 
 
@@ -235,7 +242,8 @@ async def test_database_persistence(integration_app):
         record = await VerificationRepository.get_verification_by_id(session, verif_id)
         assert record is not None
         assert record.request_id == req_id
-        assert record.status == "FRESH"
+        assert record.status == "completed"
+        assert record.freshness_status == "FRESH"
         assert len(record.claims) == 1
         assert len(record.claims[0].evidence) >= 1
 
@@ -249,7 +257,8 @@ async def test_response_schema_compatibility(integration_app):
     # Re-parse into VerificationResponse
     parsed = VerificationResponse.model_validate(resp.json())
     assert parsed.request_id == "req_roundtrip"
-    assert parsed.status == VerificationStatus.FRESH
+    assert parsed.status == LifecycleStatus.COMPLETED
+    assert parsed.freshness_status == FreshnessStatus.FRESH
 
 
 # 11. Enum serialization (strings, not internal objects)
@@ -318,8 +327,7 @@ async def test_no_real_api_calls(integration_app):
 @pytest.mark.asyncio
 async def test_contract_validation_against_shared_schema(integration_app):
     """
-    Validates that request and response payloads adhere to the shared contract schema
-    or documents any genuine enum divergence.
+    Validates that request and response payloads adhere to the shared contract schema.
     """
     client, _, _ = integration_app
     schema_path = Path(__file__).resolve().parents[3] / "shared" / "schemas" / "verification_api.json"
@@ -343,7 +351,15 @@ async def test_contract_validation_against_shared_schema(integration_app):
     assert resp.status_code == 200
     resp_data = resp.json()
 
-    # 3. Check compatibility with Go client expected fields
+    # 3. Full validation of response against shared VerificationResponse schema
+    resp_schema = {
+        "$schema": shared_schema.get("$schema", "http://json-schema.org/draft-07/schema#"),
+        "definitions": shared_schema["definitions"],
+        **shared_schema["oneOf"][1],
+    }
+    jsonschema.validate(instance=resp_data, schema=resp_schema)
+
+    # 4. Check compatibility with Go client expected fields
     assert "verification_id" in resp_data
     assert "request_id" in resp_data
     assert "status" in resp_data
@@ -355,3 +371,108 @@ async def test_contract_validation_against_shared_schema(integration_app):
         assert "verdict" in claim
         assert "confidence" in claim
         assert "evidence" in claim
+
+    # 5. GET response validation against shared schema
+    verif_id = resp_data["verification_id"]
+    get_resp = await client.get(f"/v1/verifications/{verif_id}")
+    assert get_resp.status_code == 200
+    jsonschema.validate(instance=get_resp.json(), schema=resp_schema)
+
+
+# 17. Lowercase verdict serialization
+@pytest.mark.asyncio
+async def test_lowercase_verdict_serialization(integration_app):
+    client, _, _ = integration_app
+    resp = await client.post("/v1/verifications", json={"request_id": "req_lc_verdict", "text": "Python 3.12 is released."})
+    assert resp.status_code == 200
+    data = resp.json()
+    for claim in data["claims"]:
+        assert claim["verdict"] in ("supported", "contradicted", "unclear")
+        assert claim["verdict"] == claim["verdict"].lower()
+
+
+# 18. Lifecycle status and freshness separation
+@pytest.mark.asyncio
+async def test_lifecycle_and_freshness_separation(integration_app):
+    client, _, sm = integration_app
+    resp = await client.post("/v1/verifications", json={"request_id": "req_sep", "text": "Python 3.12 is released."})
+    assert resp.status_code == 200
+    data = resp.json()
+    # status must be lifecycle
+    assert data["status"] in ("accepted", "completed", "failed")
+    assert data["status"] == "completed"
+    # freshness_status must be freshness evaluation
+    assert data["freshness_status"] in ("FRESH", "STALE", "UNCERTAIN", "NOT_REQUIRED")
+    assert data["freshness_status"] == "FRESH"
+
+    # Verify DB separation
+    async with sm() as session:
+        rec = await VerificationRepository.get_verification_by_id(session, data["verification_id"])
+        assert rec.status == "completed"
+        assert rec.freshness_status == "FRESH"
+
+
+# 19. Claim metadata serialization
+@pytest.mark.asyncio
+async def test_claim_metadata_serialization(integration_app):
+    client, _, _ = integration_app
+    resp = await client.post("/v1/verifications", json={"request_id": "req_claim_meta", "text": "Python 3.12 is released."})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["claims"]) > 0
+    c = data["claims"][0]
+    assert c["category"] == "software_version"
+    assert c["entity"] == "Python"
+    assert c["attribute"] == "latest_version"
+    assert c["original_text"] == "Python 3.12 is the latest stable version."
+    assert c["text"] == c["original_text"]
+
+
+# 20. Evidence field aliases
+@pytest.mark.asyncio
+async def test_evidence_field_aliases(integration_app):
+    client, _, _ = integration_app
+    resp = await client.post("/v1/verifications", json={"request_id": "req_ev_aliases", "text": "Python 3.12 is released."})
+    assert resp.status_code == 200
+    data = resp.json()
+    ev = data["claims"][0]["evidence"][0]
+    # url and source_url must match
+    assert ev["url"] == ev["source_url"]
+    assert "https://www.python.org/downloads/" in ev["source_url"]
+    # title and source_title must match
+    assert ev["title"] == ev["source_title"]
+    # snippet and content must match
+    assert ev["snippet"] == ev["content"]
+
+
+# 21. Repeated request_id / idempotency behavior
+@pytest.mark.asyncio
+async def test_repeated_request_id_idempotency(integration_app):
+    client, mock_pipeline, _ = integration_app
+    payload = {"request_id": "req_idempotent_test", "text": "Python 3.12 is released."}
+    resp1 = await client.post("/v1/verifications", json=payload)
+    assert resp1.status_code == 200
+    data1 = resp1.json()
+
+    # Second call with identical request_id
+    resp2 = await client.post("/v1/verifications", json=payload)
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+
+    # Must return same verification_id
+    assert data1["verification_id"] == data2["verification_id"]
+    assert data1["request_id"] == data2["request_id"]
+    assert data2["status"] == "completed"
+    assert data2["freshness_status"] == "FRESH"
+
+
+# 22. Async mode handling (synchronous execution fallback)
+@pytest.mark.asyncio
+async def test_async_mode_handling(integration_app):
+    client, _, _ = integration_app
+    payload = {"request_id": "req_async_mode", "text": "Python 3.12 is released.", "mode": "async"}
+    resp = await client.post("/v1/verifications", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "completed"
+    assert data["freshness_status"] == "FRESH"

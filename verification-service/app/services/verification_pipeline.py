@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 import time
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -25,6 +25,8 @@ from app.schemas.evidence import (
 from app.schemas.request import VerificationRequest
 from app.schemas.response import (
     APIErrorDetail,
+    FreshnessStatus,
+    LifecycleStatus,
     VerificationResponse,
     VerificationStatus,
 )
@@ -80,6 +82,25 @@ class VerificationPipeline:
             or "version" in claim.attribute.lower()
         )
 
+    @staticmethod
+    def _freshness_to_lifecycle(
+        freshness: Union[FreshnessStatus, VerificationStatus, str],
+    ) -> tuple[LifecycleStatus, FreshnessStatus]:
+        """
+        Maps an internal freshness status to the two-field API contract.
+
+        Returns (lifecycle_status, freshness_status):
+        - lifecycle_status: LifecycleStatus.COMPLETED
+        - freshness_status: FreshnessStatus enum (FRESH, STALE, UNCERTAIN, NOT_REQUIRED)
+        """
+        if isinstance(freshness, FreshnessStatus):
+            return LifecycleStatus.COMPLETED, freshness
+        raw = freshness.value if hasattr(freshness, "value") else str(freshness)
+        freshness_val = FreshnessStatus._missing_(raw)
+        if freshness_val is None:
+            freshness_val = FreshnessStatus.FRESH
+        return LifecycleStatus.COMPLETED, freshness_val
+
     async def verify(
         self,
         request: VerificationRequest,
@@ -96,10 +117,12 @@ class VerificationPipeline:
         if not request.response_text or not request.response_text.strip():
             logger.debug("Verification skipped for empty text in request %s", request.request_id)
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            _lifecycle, _freshness = self._freshness_to_lifecycle(FreshnessStatus.NOT_REQUIRED)
             return VerificationResponse(
                 request_id=request.request_id,
                 verification_id=verification_id,
-                status=VerificationStatus.NOT_REQUIRED,
+                status=_lifecycle,
+                freshness_status=_freshness,
                 requires_refresh=False,
                 claims_checked=0,
                 results=[],
@@ -113,10 +136,12 @@ class VerificationPipeline:
         if not prefilter_result.requires_verification:
             logger.info("Prefilter bypassed verification for request %s (signals: %s)", request.request_id, prefilter_result.matched_signals)
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            _lifecycle, _freshness = self._freshness_to_lifecycle(FreshnessStatus.NOT_REQUIRED)
             return VerificationResponse(
                 request_id=request.request_id,
                 verification_id=verification_id,
-                status=VerificationStatus.NOT_REQUIRED,
+                status=_lifecycle,
+                freshness_status=_freshness,
                 requires_refresh=False,
                 claims_checked=0,
                 results=[],
@@ -133,10 +158,12 @@ class VerificationPipeline:
         except ExtractionError as e:
             logger.warning("Claim extraction failed for request %s: %s", request.request_id, e.message)
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            _lifecycle, _freshness = self._freshness_to_lifecycle(FreshnessStatus.UNCERTAIN)
             return VerificationResponse(
                 request_id=request.request_id,
                 verification_id=verification_id,
-                status=VerificationStatus.UNCERTAIN,
+                status=_lifecycle,
+                freshness_status=_freshness,
                 requires_refresh=False,
                 claims_checked=0,
                 results=[],
@@ -164,10 +191,12 @@ class VerificationPipeline:
         if not extracted_claims:
             logger.info("No time-sensitive claims extracted from text for request %s", request.request_id)
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            _lifecycle, _freshness = self._freshness_to_lifecycle(FreshnessStatus.FRESH)
             resp = VerificationResponse(
                 request_id=request.request_id,
                 verification_id=verification_id,
-                status=VerificationStatus.FRESH,
+                status=_lifecycle,
+                freshness_status=_freshness,
                 requires_refresh=False,
                 claims_checked=0,
                 results=[],
@@ -330,18 +359,37 @@ class VerificationPipeline:
                     checked_at=now,
                 )
 
-        # Step D: Assemble and order final results
-        final_results = [resolved_verdicts[c.claim_id] for c in extracted_claims if c.claim_id in resolved_verdicts]
+        # Step D: Assemble and order final results, injecting ExtractedClaim metadata
+        claim_meta_lookup = {c.claim_id: c for c in extracted_claims}
+        final_results: List[ClaimVerdictResult] = []
+        for c in extracted_claims:
+            if c.claim_id not in resolved_verdicts:
+                continue
+            verdict_result = resolved_verdicts[c.claim_id]
+            meta = claim_meta_lookup.get(c.claim_id)
+            if meta is not None:
+                # Inject claim metadata fields for schema compliance (copy to avoid mutation)
+                enriched = verdict_result.model_copy(update={
+                    "category": meta.category.value if meta.category else None,
+                    "entity": meta.entity,
+                    "attribute": meta.attribute,
+                    "original_text": meta.text,
+                })
+                final_results.append(enriched)
+            else:
+                final_results.append(verdict_result)
 
         # Step E: Determine overall response status and refresh flag
-        status, requires_refresh = self._aggregate_overall_status(extracted_claims, final_results)
+        freshness_status, requires_refresh = self._aggregate_overall_status(extracted_claims, final_results)
+        lifecycle_status, freshness_str = self._freshness_to_lifecycle(freshness_status)
 
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
         response = VerificationResponse(
             request_id=request.request_id,
             verification_id=verification_id,
-            status=status,
+            status=lifecycle_status,
+            freshness_status=freshness_str,
             requires_refresh=requires_refresh,
             claims_checked=len(final_results),
             results=final_results,
@@ -364,23 +412,23 @@ class VerificationPipeline:
         self,
         claims: List[ExtractedClaim],
         results: List[ClaimVerdictResult],
-    ) -> Tuple[VerificationStatus, bool]:
+    ) -> Tuple[FreshnessStatus, bool]:
         """
         Aggregates claim-level verdicts and category freshness policies into the overall status.
         Safety invariant: Incomplete or unclear verifications can NEVER be labeled FRESH.
         """
         if not results:
-            return VerificationStatus.FRESH, False
+            return FreshnessStatus.FRESH, False
 
         claim_map = {c.claim_id: c for c in claims}
 
         # 1. Any contradicted claim invalidates freshness -> STALE
         if any(r.verdict == ClaimVerdict.CONTRADICTED for r in results):
-            return VerificationStatus.STALE, True
+            return FreshnessStatus.STALE, True
 
         # 2. Any unclear / failed claim implies uncertainty -> UNCERTAIN (never FRESH)
         if any(r.verdict == ClaimVerdict.UNCLEAR for r in results):
-            return VerificationStatus.UNCERTAIN, False
+            return FreshnessStatus.UNCERTAIN, False
 
         # 3. All claims are SUPPORTED -> Check freshness policy TTLs
         all_fresh = True
@@ -397,9 +445,9 @@ class VerificationPipeline:
                 break
 
         if all_fresh:
-            return VerificationStatus.FRESH, False
+            return FreshnessStatus.FRESH, False
         else:
-            return VerificationStatus.STALE, True
+            return FreshnessStatus.STALE, True
 
     def _convert_cached_record_to_result(
         self,

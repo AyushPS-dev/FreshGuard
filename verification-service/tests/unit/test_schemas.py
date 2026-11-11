@@ -12,6 +12,8 @@ from app.schemas.evidence import EvidenceItem, EvidenceMinimal, EvidenceSourceTy
 from app.schemas.request import VerificationMode, VerificationRequest
 from app.schemas.response import (
     APIErrorDetail,
+    FreshnessStatus,
+    LifecycleStatus,
     VerificationResponse,
     VerificationStatus,
 )
@@ -263,7 +265,8 @@ def test_valid_verification_response():
 
     resp = VerificationResponse(
         request_id="req_001",
-        status=VerificationStatus.STALE,
+        status=LifecycleStatus.COMPLETED,
+        freshness_status=FreshnessStatus.STALE,
         requires_refresh=True,
         claims_checked=1,
         results=[claim_res],
@@ -271,7 +274,8 @@ def test_valid_verification_response():
     )
 
     assert resp.request_id == "req_001"
-    assert resp.status == VerificationStatus.STALE
+    assert resp.status == LifecycleStatus.COMPLETED
+    assert resp.freshness_status == FreshnessStatus.STALE
     assert resp.requires_refresh is True
     assert resp.claims_checked == 1
     assert len(resp.results) == 1
@@ -283,7 +287,8 @@ def test_response_json_serialization():
     """Test that model_dump(mode='json') outputs clean JSON types matching Go/TS contracts."""
     resp = VerificationResponse(
         request_id="req_001",
-        status=VerificationStatus.STALE,
+        status=LifecycleStatus.COMPLETED,
+        freshness_status=FreshnessStatus.STALE,
         requires_refresh=True,
         claims_checked=1,
         results=[
@@ -306,11 +311,15 @@ def test_response_json_serialization():
 
     dumped = resp.model_dump(mode="json")
     assert dumped["request_id"] == "req_001"
-    assert dumped["status"] == "STALE"
+    assert dumped["status"] == "completed"
+    assert dumped["freshness_status"] == "STALE"
     assert dumped["requires_refresh"] is True
     assert dumped["processing_time_ms"] == 1200
     assert isinstance(dumped["results"][0]["evidence"][0]["url"], str)
     assert dumped["results"][0]["evidence"][0]["url"] == "https://www.python.org/downloads/"
+    assert dumped["results"][0]["evidence"][0]["source_url"] == "https://www.python.org/downloads/"
+    assert dumped["results"][0]["evidence"][0]["source_title"] == "Python Downloads"
+    assert dumped["results"][0]["evidence"][0]["snippet"] == "Python 3.13.0 is the latest stable release."
     assert "checked_at" in dumped
 
 

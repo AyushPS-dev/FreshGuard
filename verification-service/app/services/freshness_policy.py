@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.config import Settings, get_settings
 from app.schemas.claims import ClaimCategory, ClaimVerdict
 from app.schemas.evidence import ensure_utc_datetime
-from app.schemas.response import VerificationStatus
+from app.schemas.response import FreshnessStatus, VerificationStatus
 
 logger = logging.getLogger("freshguard.freshness_policy")
 
@@ -16,7 +16,7 @@ class FreshnessEvaluation(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     is_fresh: bool = Field(..., description="Whether the record is within its valid TTL window")
-    status: VerificationStatus = Field(..., description="FRESH, STALE, or UNCERTAIN")
+    status: FreshnessStatus = Field(..., description="FRESH, STALE, or UNCERTAIN")
     category: str = Field(..., description="Claim category evaluated")
     ttl_seconds: int = Field(..., description="Policy TTL applied in seconds")
     checked_at: Optional[datetime] = Field(default=None, description="Original verification timestamp (UTC)")
@@ -99,7 +99,7 @@ class FreshnessPolicyEngine:
         if checked_at is None:
             return FreshnessEvaluation(
                 is_fresh=False,
-                status=VerificationStatus.STALE,
+                status=FreshnessStatus.STALE,
                 category=cat_str,
                 ttl_seconds=ttl,
                 checked_at=None,
@@ -112,11 +112,17 @@ class FreshnessPolicyEngine:
 
         # 2. Incomplete or inconclusive verdict check
         if verdict is not None:
-            verdict_str = verdict.value if isinstance(verdict, ClaimVerdict) else str(verdict).upper()
-            if verdict_str not in ("SUPPORTED", "CONTRADICTED"):
+            if isinstance(verdict, ClaimVerdict):
+                is_conclusive = verdict in (ClaimVerdict.SUPPORTED, ClaimVerdict.CONTRADICTED)
+                verdict_str = verdict.value
+            else:
+                verdict_str = str(verdict).lower()
+                is_conclusive = verdict_str in ("supported", "contradicted")
+
+            if not is_conclusive:
                 return FreshnessEvaluation(
                     is_fresh=False,
-                    status=VerificationStatus.UNCERTAIN,
+                    status=FreshnessStatus.UNCERTAIN,
                     category=cat_str,
                     ttl_seconds=ttl,
                     checked_at=utc_checked,
@@ -138,7 +144,7 @@ class FreshnessPolicyEngine:
         if is_fresh:
             return FreshnessEvaluation(
                 is_fresh=True,
-                status=VerificationStatus.FRESH,
+                status=FreshnessStatus.FRESH,
                 category=cat_str,
                 ttl_seconds=ttl,
                 checked_at=utc_checked,
@@ -149,7 +155,7 @@ class FreshnessPolicyEngine:
         else:
             return FreshnessEvaluation(
                 is_fresh=False,
-                status=VerificationStatus.STALE,
+                status=FreshnessStatus.STALE,
                 category=cat_str,
                 ttl_seconds=ttl,
                 checked_at=utc_checked,

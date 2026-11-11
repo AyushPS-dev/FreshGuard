@@ -17,6 +17,7 @@ class VerificationRecord(Base):
     verification_id: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
     request_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    freshness_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     requires_refresh: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     claims_checked: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     processing_time_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional, Union
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 from app.schemas.evidence import EvidenceItem, EvidenceMinimal, ensure_utc_datetime
 
 
@@ -19,14 +19,18 @@ class ClaimCategory(str, Enum):
 
 
 class ClaimVerdict(str, Enum):
-    """Verification verdict for an individual factual claim."""
-    SUPPORTED = "SUPPORTED"
-    CONTRADICTED = "CONTRADICTED"
-    UNCLEAR = "UNCLEAR"
+    """Verification verdict for an individual factual claim.
+
+    Values are lowercase to match the Go client constants (VerdictSupported, VerdictContradicted,
+    VerdictUnclear) and the shared/schemas/verification_api.json enum definition.
+    """
+    SUPPORTED = "supported"
+    CONTRADICTED = "contradicted"
+    UNCLEAR = "unclear"
 
     @classmethod
     def _missing_(cls, value: object):
-        """Allow case-insensitive resolution (e.g. 'supported' -> SUPPORTED)."""
+        """Allow case-insensitive resolution (e.g. 'SUPPORTED' -> SUPPORTED)."""
         if isinstance(value, str):
             for member in cls:
                 if member.value.upper() == value.upper():
@@ -77,7 +81,11 @@ class ClaimExtractionResponse(BaseModel):
 
 
 class ClaimVerdictResult(BaseModel):
-    """Verification judgment on an individual extracted claim."""
+    """Verification judgment on an individual extracted claim.
+
+    Includes optional ExtractedClaim metadata fields (category, entity, attribute, original_text)
+    to satisfy the shared/schemas/verification_api.json Claim object requirements when serialized.
+    """
     model_config = ConfigDict(
         populate_by_name=True,
         str_strip_whitespace=True,
@@ -85,7 +93,7 @@ class ClaimVerdictResult(BaseModel):
     )
 
     claim_id: str = Field(..., min_length=1, max_length=128, description="Identifier of the claim verified")
-    verdict: ClaimVerdict = Field(..., description="Verdict outcome: SUPPORTED, CONTRADICTED, or UNCLEAR")
+    verdict: ClaimVerdict = Field(..., description="Verdict outcome: supported, contradicted, or unclear")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score calibrated between 0.0 and 1.0")
     reason: str = Field(..., min_length=1, max_length=2000, description="Justification grounded strictly in evidence")
     evidence_ids: List[str] = Field(default_factory=list, description="List of evidence IDs grounding this verdict")
@@ -95,6 +103,12 @@ class ClaimVerdictResult(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc),
         description="Verification check timestamp in UTC",
     )
+    # Claim metadata — populated at the API boundary from ExtractedClaim.
+    # Optional for backward compatibility with internal pipeline code.
+    category: Optional[str] = Field(default=None, description="Claim category (e.g. software_version, pricing)")
+    entity: Optional[str] = Field(default=None, description="Subject entity of the claim")
+    attribute: Optional[str] = Field(default=None, description="Attribute of the subject entity")
+    original_text: Optional[str] = Field(default=None, alias="text", description="Verbatim claim text from the LLM response")
 
     @field_validator("checked_at", mode="after")
     @classmethod
@@ -110,4 +124,23 @@ class ClaimVerdictResult(BaseModel):
             res = ClaimVerdict._missing_(v)
             if res is not None:
                 return res
-        raise ValueError(f"Invalid verdict: {v}. Must be SUPPORTED, CONTRADICTED, or UNCLEAR.")
+        raise ValueError(f"Invalid verdict: {v}. Must be supported, contradicted, or unclear.")
+
+    @model_serializer(mode="wrap")
+    def _serialize_verdict_result(self, handler):
+        d = handler(self)
+        if isinstance(d, dict):
+            # Ensure text and original_text are synchronized for TS/Go/Python compatibility
+            if d.get("original_text") is not None:
+                d.setdefault("text", d["original_text"])
+            elif d.get("text") is not None:
+                d.setdefault("original_text", d["text"])
+        return d
+
+    def model_dump(self, *args, **kwargs):
+        d = super().model_dump(*args, **kwargs)
+        if "original_text" in d and d["original_text"] is not None:
+            d.setdefault("text", d["original_text"])
+        elif "text" in d and d["text"] is not None:
+            d.setdefault("original_text", d["text"])
+        return d

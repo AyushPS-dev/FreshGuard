@@ -7,7 +7,12 @@ from app.database.models import Base
 from app.database.repository import VerificationRepository, generate_claim_fingerprint
 from app.schemas.claims import ClaimCategory, ClaimVerdict, ClaimVerdictResult, ExtractedClaim
 from app.schemas.evidence import EvidenceItem, EvidenceMinimal, EvidenceSourceType
-from app.schemas.response import VerificationResponse, VerificationStatus
+from app.schemas.response import (
+    FreshnessStatus,
+    LifecycleStatus,
+    VerificationResponse,
+    VerificationStatus,
+)
 from app.services.freshness_policy import FreshnessPolicyEngine
 
 
@@ -50,7 +55,8 @@ def sample_verification():
     resp = VerificationResponse(
         request_id="req_100",
         verification_id="verif_100",
-        status=VerificationStatus.FRESH,
+        status=LifecycleStatus.COMPLETED,
+        freshness_status=FreshnessStatus.FRESH,
         requires_refresh=False,
         claims_checked=1,
         results=[verdict_res],
@@ -86,10 +92,11 @@ async def test_save_and_retrieve_verification(test_db_session: AsyncSession, sam
     retrieved = await VerificationRepository.get_verification_by_id(test_db_session, "verif_100")
     assert retrieved is not None
     assert retrieved.verification_id == "verif_100"
-    assert retrieved.status == "FRESH"
+    assert retrieved.status == "completed"
+    assert retrieved.freshness_status == "FRESH"
     assert len(retrieved.claims) == 1
     assert retrieved.claims[0].claim_id == "claim_001"
-    assert retrieved.claims[0].verdict == "SUPPORTED"
+    assert retrieved.claims[0].verdict == ClaimVerdict.SUPPORTED.value
     assert len(retrieved.claims[0].evidence) == 1
     assert "python.org" in retrieved.claims[0].evidence[0].url
 
@@ -120,7 +127,7 @@ async def test_find_fresh_cached_claim_hit(test_db_session: AsyncSession, sample
 
     assert cached is not None
     assert cached.claim_id == "claim_001"
-    assert cached.verdict == "SUPPORTED"
+    assert cached.verdict == ClaimVerdict.SUPPORTED.value
     assert cached.is_cached_fact is True
     assert len(cached.evidence) == 1
 

@@ -15,7 +15,12 @@ from app.database.models import (
 )
 from app.schemas.claims import ClaimCategory, ClaimVerdict, ClaimVerdictResult, ExtractedClaim
 from app.schemas.evidence import EvidenceItem, ensure_utc_datetime
-from app.schemas.response import VerificationResponse, VerificationStatus
+from app.schemas.response import (
+    FreshnessStatus,
+    LifecycleStatus,
+    VerificationResponse,
+    VerificationStatus,
+)
 from app.utils.exceptions import DatabaseError
 
 if TYPE_CHECKING:
@@ -62,11 +67,24 @@ class VerificationRepository:
             engine = FreshnessPolicyEngine()
         verif_id = resp.verification_id or f"verif_{resp.request_id}_{int(now.timestamp())}"
 
+        # Determine lifecycle and freshness statuses
+        lifecycle_str = resp.status.value if hasattr(resp.status, "value") else str(resp.status)
+        freshness_str = (
+            resp.freshness_status.value
+            if hasattr(resp.freshness_status, "value")
+            else (str(resp.freshness_status) if resp.freshness_status is not None else None)
+        )
+        if lifecycle_str in ("FRESH", "STALE", "UNCERTAIN", "NOT_REQUIRED"):
+            if not freshness_str:
+                freshness_str = lifecycle_str
+            lifecycle_str = "completed"
+
         # 1. Create top-level verification record
         verif_record = VerificationRecord(
             verification_id=verif_id,
             request_id=resp.request_id,
-            status=resp.status.value,
+            status=lifecycle_str,
+            freshness_status=freshness_str,
             requires_refresh=resp.requires_refresh,
             claims_checked=resp.claims_checked,
             processing_time_ms=resp.processing_time_ms,
@@ -95,7 +113,7 @@ class VerificationRepository:
             # Safety rule: Inconclusive or failed verifications are not cached as reusable facts
             is_cacheable = (
                 result.verdict in (ClaimVerdict.SUPPORTED, ClaimVerdict.CONTRADICTED)
-                and resp.status not in (VerificationStatus.FAILED, "failed")
+                and lifecycle_str not in ("failed", "FAILED")
                 and len(result.evidence) > 0
             )
 
